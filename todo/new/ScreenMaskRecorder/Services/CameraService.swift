@@ -9,6 +9,7 @@ import Foundation
 import AVFoundation
 import Combine
 import CoreVideo
+import QuartzCore
 
 /// 摄像头位置
 enum CameraPosition {
@@ -24,7 +25,6 @@ class CameraService: NSObject, ObservableObject {
     @Published var isRunning = false
     @Published var previewLayer: AVCaptureVideoPreviewLayer?
     @Published var currentFrame: CVPixelBuffer?
-    @Published var currentAudioSample: CMSampleBuffer?
 
     // MARK: - Private Properties
 
@@ -32,8 +32,11 @@ class CameraService: NSObject, ObservableObject {
     private var videoOutput: AVCaptureVideoDataOutput?
     private var audioOutput: AVCaptureAudioDataOutput?
     private let sessionQueue = DispatchQueue(label: "com.screenmaskrecorder.camera")
-    private var hasLoggedFirstVideoFrame = false
-    private var hasLoggedFirstAudioSample = false
+    nonisolated(unsafe) private var hasLoggedFirstVideoFrame = false
+    nonisolated(unsafe) private var hasLoggedFirstAudioSample = false
+    nonisolated(unsafe) private var lastPreviewDispatchTime: CFTimeInterval = 0
+    nonisolated(unsafe) private var previewUpdatePending = false
+    private let previewUpdateInterval: CFTimeInterval = 1.0 / 12.0
     nonisolated(unsafe) var onVideoSample: ((CMSampleBuffer) -> Void)?
     nonisolated(unsafe) var onAudioSample: ((CMSampleBuffer) -> Void)?
 
@@ -215,23 +218,31 @@ extension CameraService: AVCaptureVideoDataOutputSampleBufferDelegate, AVCapture
         if output is AVCaptureVideoDataOutput {
             guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
             onVideoSample?(sampleBuffer)
+
+            if !hasLoggedFirstVideoFrame {
+                hasLoggedFirstVideoFrame = true
+                print("✓ 收到第一帧视频: \(CVPixelBufferGetWidth(pixelBuffer))x\(CVPixelBufferGetHeight(pixelBuffer))")
+            }
+
+            let now = CACurrentMediaTime()
+            guard !previewUpdatePending, now - lastPreviewDispatchTime >= previewUpdateInterval else {
+                return
+            }
+
+            previewUpdatePending = true
+            lastPreviewDispatchTime = now
+
             Task { @MainActor in
-                if !self.hasLoggedFirstVideoFrame {
-                    self.hasLoggedFirstVideoFrame = true
-                    print("✓ 收到第一帧视频: \(CVPixelBufferGetWidth(pixelBuffer))x\(CVPixelBufferGetHeight(pixelBuffer))")
-                }
                 self.currentFrame = pixelBuffer
+                self.previewUpdatePending = false
             }
         }
         // 处理音频样本
         else if output is AVCaptureAudioDataOutput {
             onAudioSample?(sampleBuffer)
-            Task { @MainActor in
-                if !self.hasLoggedFirstAudioSample {
-                    self.hasLoggedFirstAudioSample = true
-                    print("✓ 收到第一帧音频")
-                }
-                self.currentAudioSample = sampleBuffer
+            if !hasLoggedFirstAudioSample {
+                hasLoggedFirstAudioSample = true
+                print("✓ 收到第一帧音频")
             }
         }
     }

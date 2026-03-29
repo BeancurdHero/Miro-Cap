@@ -468,8 +468,12 @@ struct RecordingPreviewView: View {
             }
 
             // 摄像头预览
-            if let frame = viewModel.currentFrame {
-                CameraFrameView(pixelBuffer: frame, filterSettings: viewModel.filterSettings)
+            if shouldUseProcessedCameraPreview, let frame = viewModel.currentFrame {
+                CameraFrameView(
+                    pixelBuffer: frame,
+                    filterSettings: viewModel.filterSettings,
+                    isPortraitSegmentationEnabled: viewModel.isPortraitSegmentationEnabled
+                )
                     .clipShape(
                         isCircle ?
                         AnyShape(Circle()) :
@@ -478,6 +482,18 @@ struct RecordingPreviewView: View {
                     .frame(width: width, height: height)
             } else if let previewLayer = viewModel.cameraPreviewLayer {
                 CameraPreviewView(previewLayer: previewLayer, filterSettings: viewModel.filterSettings)
+                    .clipShape(
+                        isCircle ?
+                        AnyShape(Circle()) :
+                        AnyShape(RoundedRectangle(cornerRadius: cornerRadius))
+                    )
+                    .frame(width: width, height: height)
+            } else if let frame = viewModel.currentFrame {
+                CameraFrameView(
+                    pixelBuffer: frame,
+                    filterSettings: viewModel.filterSettings,
+                    isPortraitSegmentationEnabled: viewModel.isPortraitSegmentationEnabled
+                )
                     .clipShape(
                         isCircle ?
                         AnyShape(Circle()) :
@@ -522,6 +538,10 @@ struct RecordingPreviewView: View {
         }
     }
 
+    private var shouldUseProcessedCameraPreview: Bool {
+        viewModel.isPortraitSegmentationEnabled || viewModel.filterSettings.requiresProcessedPreview
+    }
+
     // MARK: - Watermark Overlay
 
     private var watermarkOverlay: some View {
@@ -554,9 +574,14 @@ struct RecordingPreviewView: View {
 struct CameraFrameView: View {
     let pixelBuffer: CVPixelBuffer
     var filterSettings: FilterSettings = .default
+    var isPortraitSegmentationEnabled = false
 
     var body: some View {
-        if let image = CameraFrameRenderer.shared.image(from: pixelBuffer, filterSettings: filterSettings) {
+        if let image = CameraFrameRenderer.shared.image(
+            from: pixelBuffer,
+            filterSettings: filterSettings,
+            isPortraitSegmentationEnabled: isPortraitSegmentationEnabled
+        ) {
             Image(nsImage: image)
                 .resizable()
                 .aspectRatio(contentMode: .fill)
@@ -570,9 +595,19 @@ final class CameraFrameRenderer {
     static let shared = CameraFrameRenderer()
 
     private let ciContext = CIContext()
+    private let portraitSegmenter = PortraitSegmenter()
 
-    func image(from pixelBuffer: CVPixelBuffer, filterSettings: FilterSettings) -> NSImage? {
-        let ciImage = filterSettings.apply(to: CIImage(cvPixelBuffer: pixelBuffer), context: ciContext)
+    func image(
+        from pixelBuffer: CVPixelBuffer,
+        filterSettings: FilterSettings,
+        isPortraitSegmentationEnabled: Bool
+    ) -> NSImage? {
+        let sourceImage = if isPortraitSegmentationEnabled {
+            portraitSegmenter.segmentedImage(from: pixelBuffer) ?? CIImage(cvPixelBuffer: pixelBuffer)
+        } else {
+            CIImage(cvPixelBuffer: pixelBuffer)
+        }
+        let ciImage = filterSettings.apply(to: sourceImage, context: ciContext)
 
         guard let cgImage = ciContext.createCGImage(ciImage, from: ciImage.extent) else {
             return nil

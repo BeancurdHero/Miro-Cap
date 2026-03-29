@@ -48,6 +48,41 @@ class PortraitSegmenter {
     /// - Parameter pixelBuffer: 输入的像素缓冲区
     /// - Returns: 处理后的像素缓冲区（背景透明）
     func processFrame(_ pixelBuffer: CVPixelBuffer) -> CVPixelBuffer? {
+        guard let outputImage = segmentedImage(from: pixelBuffer) else {
+            return nil
+        }
+
+        return renderToPixelBuffer(outputImage, width: CVPixelBufferGetWidth(pixelBuffer), height: CVPixelBufferGetHeight(pixelBuffer))
+    }
+
+    /// 返回带透明背景的人像图像
+    func segmentedImage(from pixelBuffer: CVPixelBuffer) -> CIImage? {
+        let originalImage = CIImage(cvPixelBuffer: pixelBuffer).transformed(
+            by: CGAffineTransform(translationX: -CIImage(cvPixelBuffer: pixelBuffer).extent.origin.x,
+                                  y: -CIImage(cvPixelBuffer: pixelBuffer).extent.origin.y)
+        )
+
+        guard let personMask = personMaskImage(from: pixelBuffer, targetExtent: originalImage.extent) else {
+            return nil
+        }
+
+        let transparentBackground = CIImage(color: .clear).cropped(to: originalImage.extent)
+        guard let blendFilter = CIFilter(name: "CIBlendWithMask") else { return nil }
+        blendFilter.setValue(originalImage, forKey: kCIInputImageKey)
+        blendFilter.setValue(transparentBackground, forKey: kCIInputBackgroundImageKey)
+        blendFilter.setValue(personMask, forKey: kCIInputMaskImageKey)
+
+        return blendFilter.outputImage?.cropped(to: originalImage.extent)
+    }
+
+    /// 设置分割质量
+    func setQuality(_ quality: SegmentationQuality) {
+        self.qualityLevel = quality
+    }
+
+    // MARK: - Private Methods
+
+    private func personMaskImage(from pixelBuffer: CVPixelBuffer, targetExtent: CGRect) -> CIImage? {
         // 创建 Vision 请求
         let request = VNGeneratePersonSegmentationRequest()
         request.qualityLevel = qualityLevel.visionQuality
@@ -62,61 +97,42 @@ class PortraitSegmenter {
                 return nil
             }
 
-            // 获取分割蒙版的像素缓冲区
-            let maskPixelBuffer = observation.pixelBuffer
+            let rawMaskImage = CIImage(cvPixelBuffer: observation.pixelBuffer).transformed(
+                by: CGAffineTransform(
+                    translationX: -CIImage(cvPixelBuffer: observation.pixelBuffer).extent.origin.x,
+                    y: -CIImage(cvPixelBuffer: observation.pixelBuffer).extent.origin.y
+                )
+            )
+            let scaleX = targetExtent.width / rawMaskImage.extent.width
+            let scaleY = targetExtent.height / rawMaskImage.extent.height
+            var scaledMask = rawMaskImage
+                .transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
+                .cropped(to: targetExtent)
 
-            // 应用蒙版到原图
-            return applyMask(to: pixelBuffer, mask: maskPixelBuffer)
+            if let maskToAlphaFilter = CIFilter(name: "CIMaskToAlpha") {
+                maskToAlphaFilter.setValue(scaledMask, forKey: kCIInputImageKey)
+                scaledMask = maskToAlphaFilter.outputImage?.cropped(to: targetExtent) ?? scaledMask
+            }
 
+            if let blurFilter = CIFilter(name: "CIGaussianBlur") {
+                blurFilter.setValue(scaledMask, forKey: kCIInputImageKey)
+                blurFilter.setValue(1.2, forKey: kCIInputRadiusKey)
+                scaledMask = blurFilter.outputImage?.cropped(to: targetExtent) ?? scaledMask
+            }
+
+            return scaledMask
         } catch {
             print("人像分割失败: \(error)")
             return nil
         }
     }
 
-    /// 设置分割质量
-    func setQuality(_ quality: SegmentationQuality) {
-        self.qualityLevel = quality
-    }
-
-    // MARK: - Private Methods
-
-    /// 应用蒙版到原图
-    private func applyMask(to original: CVPixelBuffer, mask: CVPixelBuffer) -> CVPixelBuffer? {
-        let ciImage = CIImage(cvPixelBuffer: original)
-
-        // Vision 输出的 mask 是单通道的，需要转换
-        let maskImage = CIImage(cvPixelBuffer: mask)
-
-        // 创建蒙版效果 - 使用 CIFilter.maskToAlpha 或类似方法
-        // 由于 Vision 输出的是人像区域为白色的蒙版，我们需要反转它
-        guard let invertFilter = CIFilter(name: "CIColorInvert") else { return nil }
-        invertFilter.setValue(maskImage, forKey: kCIInputImageKey)
-        guard let invertedMask = invertFilter.outputImage else { return nil }
-
-        // 将单通道蒙版转换为 alpha 通道
-        // 首先将蒙版扩展到正确的颜色空间
-        guard let maskToAlphaFilter = CIFilter(name: "CIMaskToAlpha") else { return nil }
-        maskToAlphaFilter.setValue(invertedMask, forKey: kCIInputImageKey)
-        guard let maskWithAlpha = maskToAlphaFilter.outputImage else { return nil }
-
-        // 现在用这个蒙版合成到原图
-        guard let blendFilter = CIFilter(name: "CIBlendWithMask") else { return nil }
-        blendFilter.setValue(ciImage, forKey: kCIInputImageKey)
-        blendFilter.setValue(CIImage(color: .clear), forKey: kCIInputBackgroundImageKey)
-        blendFilter.setValue(maskWithAlpha, forKey: kCIInputMaskImageKey)
-
-        guard let outputImage = blendFilter.outputImage else { return nil }
-
-        // 渲染到新的像素缓冲区
+    private func renderToPixelBuffer(_ image: CIImage, width: Int, height: Int) -> CVPixelBuffer? {
         var pixelBuffer: CVPixelBuffer?
         let attrs = [
             kCVPixelBufferCGImageCompatibilityKey: kCFBooleanTrue!,
             kCVPixelBufferCGBitmapContextCompatibilityKey: kCFBooleanTrue!
         ] as CFDictionary
-
-        let width = CVPixelBufferGetWidth(original)
-        let height = CVPixelBufferGetHeight(original)
 
         CVPixelBufferCreate(
             kCFAllocatorDefault,
@@ -129,7 +145,7 @@ class PortraitSegmenter {
 
         guard let outputBuffer = pixelBuffer else { return nil }
 
-        ciContext.render(outputImage, to: outputBuffer)
+        ciContext.render(image.cropped(to: CGRect(x: 0, y: 0, width: width, height: height)), to: outputBuffer)
         return outputBuffer
     }
 

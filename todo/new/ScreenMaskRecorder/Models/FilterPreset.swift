@@ -19,6 +19,14 @@ struct BasicFilterAdjustments {
 
     static let `default` = BasicFilterAdjustments()
 
+    var isDefault: Bool {
+        brightness == 0.0 &&
+        contrast == 1.0 &&
+        saturation == 1.0 &&
+        temperature == 6500 &&
+        exposure == 0.0
+    }
+
     func apply(to image: CIImage) -> CIImage {
         var result = image
 
@@ -202,6 +210,10 @@ struct FilterSettings {
     var basic: BasicFilterAdjustments = .default
     var zoom: Float = 1.0
     var fisheyeIntensity: Float = 1.3
+
+    var requiresProcessedPreview: Bool {
+        preset != .none || !basic.isDefault || zoom != 1.0 || fisheyeIntensity != FilterSettings.default.fisheyeIntensity
+    }
 
     func apply(to image: CIImage, context: CIContext) -> CIImage {
         var result = image.transformed(

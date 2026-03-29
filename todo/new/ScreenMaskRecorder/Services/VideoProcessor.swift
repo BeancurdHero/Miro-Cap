@@ -786,15 +786,15 @@ class VideoProcessor {
     }
 
     private func processCameraFrame(_ pixelBuffer: CVPixelBuffer) -> CIImage? {
-        var image = filterSettings.apply(to: CIImage(cvPixelBuffer: pixelBuffer), context: ciContext)
-
-        // 人像背景去除
+        let sourceImage: CIImage
         if isPortraitSegmentationEnabled,
-           let segmentedBuffer = portraitSegmenter.processFrame(pixelBuffer) {
-            image = CIImage(cvPixelBuffer: segmentedBuffer)
+           let segmentedImage = portraitSegmenter.segmentedImage(from: pixelBuffer) {
+            sourceImage = segmentedImage
+        } else {
+            sourceImage = CIImage(cvPixelBuffer: pixelBuffer)
         }
 
-        return image
+        return filterSettings.apply(to: sourceImage, context: ciContext)
     }
 
     private func applyBasicFilters(to image: CIImage) -> CIImage {
