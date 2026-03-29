@@ -185,7 +185,7 @@ struct FilterPanel: View {
                 name: "镜头缩放",
                 icon: "plus.magnifyingglass",
                 value: $viewModel.filterSettings.zoom,
-                range: 0.4...1.4,
+                range: 0.1...1.4,
                 valueFormat: "%.2fx"
             )
 
@@ -193,7 +193,7 @@ struct FilterPanel: View {
                 name: "鱼眼强度",
                 icon: "camera.macro",
                 value: $viewModel.filterSettings.fisheyeIntensity,
-                range: 0.4...2.0,
+                range: 0.1...2.0,
                 valueFormat: "%.2fx"
             )
 

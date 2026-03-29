@@ -139,7 +139,7 @@ enum FilterPreset: String, CaseIterable {
         )
         let extent = normalizedImage.extent
         let center = CIVector(x: extent.midX, y: extent.midY)
-        let clampedIntensity = max(0.4, min(intensity, 2.0))
+        let clampedIntensity = max(0.1, min(intensity, 2.0))
 
         var result = normalizedImage
 
@@ -147,15 +147,15 @@ enum FilterPreset: String, CaseIterable {
             bump.setValue(result, forKey: kCIInputImageKey)
             bump.setValue(center, forKey: kCIInputCenterKey)
             bump.setValue(max(extent.width, extent.height) * 0.92, forKey: kCIInputRadiusKey)
-            bump.setValue(0.35 + clampedIntensity * 0.18, forKey: kCIInputScaleKey)
+            bump.setValue(0.24 + clampedIntensity * 0.32, forKey: kCIInputScaleKey)
             result = bump.outputImage?.cropped(to: extent) ?? result
         }
 
-        result = applyCameraZoom(to: result, scale: 1.03 + CGFloat(clampedIntensity) * 0.04)
+        result = applyCameraZoom(to: result, scale: 1.02 + CGFloat(clampedIntensity) * 0.07)
 
         if let vignette = CIFilter(name: "CIVignette") {
             vignette.setValue(result, forKey: kCIInputImageKey)
-            vignette.setValue(0.45 + clampedIntensity * 0.18, forKey: kCIInputIntensityKey)
+            vignette.setValue(0.40 + clampedIntensity * 0.24, forKey: kCIInputIntensityKey)
             vignette.setValue(min(extent.width, extent.height) * 1.1, forKey: kCIInputRadiusKey)
             result = vignette.outputImage?.cropped(to: extent) ?? result
         }
@@ -201,7 +201,7 @@ struct FilterSettings {
     var preset: FilterPreset = .none
     var basic: BasicFilterAdjustments = .default
     var zoom: Float = 1.0
-    var fisheyeIntensity: Float = 1.15
+    var fisheyeIntensity: Float = 1.3
 
     func apply(to image: CIImage, context: CIContext) -> CIImage {
         var result = image.transformed(

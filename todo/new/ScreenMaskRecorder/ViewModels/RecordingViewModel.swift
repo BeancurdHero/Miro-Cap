@@ -41,6 +41,8 @@ class RecordingViewModel: ObservableObject {
 
     @Published var recordingState: RecordingState = .idle
     @Published var backgroundMedia: BackgroundMediaType = .none
+    @Published var canvasAspectRatio: CanvasAspectRatio = .landscape16x9
+    @Published var backgroundScale: CGFloat = 1.0
     @Published var maskSettings = MaskSettings.default
     @Published var filterSettings = FilterSettings.default
     @Published var isPortraitSegmentationEnabled = false
@@ -163,6 +165,8 @@ class RecordingViewModel: ObservableObject {
         // 启动视频处理
         try await videoProcessor?.startRecording(
             backgroundMedia: backgroundMedia,
+            canvasAspectRatio: canvasAspectRatio,
+            backgroundScale: backgroundScale,
             maskSettings: maskSettings,
             filterSettings: filterSettings,
             isPortraitSegmentationEnabled: isPortraitSegmentationEnabled,

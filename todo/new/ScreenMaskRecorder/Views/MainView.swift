@@ -38,7 +38,7 @@ struct MainView: View {
                 // 录屏预览区域
                 RecordingPreviewView()
                     .environmentObject(viewModel)
-                    .aspectRatio(16/9, contentMode: .fit)
+                    .aspectRatio(viewModel.canvasAspectRatio.previewAspectRatio, contentMode: .fit)
                     .background(Color.black)
                     .cornerRadius(12)
 
@@ -162,6 +162,10 @@ struct MainView: View {
 
     private var controlPanel: some View {
         VStack(spacing: 16) {
+            canvasControls
+
+            Divider()
+
             // 蒙版控制
             maskControls
 
@@ -248,6 +252,52 @@ struct MainView: View {
 
     // MARK: - Mask Controls
 
+    private var canvasControls: some View {
+        HStack(spacing: 24) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("画布比例")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                Picker("画布比例", selection: $viewModel.canvasAspectRatio) {
+                    ForEach(CanvasAspectRatio.allCases, id: \.self) { ratio in
+                        Text(ratio.rawValue).tag(ratio)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 320)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("背景缩放")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                HStack(spacing: 8) {
+                    Slider(
+                        value: $viewModel.backgroundScale,
+                        in: 0.4...1.8
+                    )
+                    .frame(width: 160)
+                    .disabled(isBackgroundScaleDisabled)
+
+                    Text(String(format: "%.2fx", viewModel.backgroundScale))
+                        .frame(width: 52, alignment: .trailing)
+                        .font(.system(.body, design: .monospaced))
+                        .foregroundColor(isBackgroundScaleDisabled ? .secondary.opacity(0.6) : .secondary)
+                }
+            }
+
+            Spacer()
+
+            Button("重置背景") {
+                viewModel.backgroundScale = 1.0
+            }
+            .buttonStyle(.bordered)
+            .disabled(isBackgroundScaleDisabled)
+        }
+    }
+
     private var maskControls: some View {
         HStack(spacing: 24) {
             // 蒙版形状
@@ -301,6 +351,13 @@ struct MainView: View {
             }
             .buttonStyle(.bordered)
         }
+    }
+
+    private var isBackgroundScaleDisabled: Bool {
+        if case .none = viewModel.backgroundMedia {
+            return true
+        }
+        return false
     }
 }
 
@@ -377,6 +434,9 @@ struct RecordingPreviewView: View {
                 VideoPlayerView(url: url)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .scaleEffect(viewModel.backgroundScale)
+        .clipped()
     }
 
     // MARK: - Camera Mask Layer
@@ -465,11 +525,22 @@ struct RecordingPreviewView: View {
     // MARK: - Watermark Overlay
 
     private var watermarkOverlay: some View {
-        VStack {
+        let watermarkFontSize: CGFloat = {
+            switch viewModel.canvasAspectRatio {
+            case .portrait9x16:
+                return 8
+            case .landscape16x9:
+                return 12
+            case .square1x1, .portrait3x4, .landscape4x3:
+                return 10
+            }
+        }()
+
+        return VStack {
             HStack {
                 Spacer()
                 Text("Created by BeancurdHero")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: watermarkFontSize, weight: .medium))
                     .foregroundColor(.white.opacity(0.6))
                     .padding(16)
             }

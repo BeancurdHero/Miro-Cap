@@ -14,8 +14,6 @@ import AppKit
 
 /// 视频配置
 struct VideoConfiguration {
-    static let outputWidth: Int32 = 1920
-    static let outputHeight: Int32 = 1080
     static let frameRate: Double = 30.0
     static let outputPixelFormat = kCVPixelFormatType_32BGRA
 }
@@ -44,9 +42,12 @@ class VideoProcessor {
 
     // 配置
     private var backgroundMedia: BackgroundMediaType = .none
+    private var canvasAspectRatio: CanvasAspectRatio = .landscape16x9
+    private var backgroundScale: CGFloat = 1.0
     private var maskSettings: MaskSettings = .default
     private var filterSettings: FilterSettings = .default
     private var isPortraitSegmentationEnabled: Bool = false
+    private var renderSize: CGSize = CanvasAspectRatio.landscape16x9.outputSize
 
     // 背景视频播放器
     private var backgroundPlayer: AVPlayer?
@@ -69,6 +70,9 @@ class VideoProcessor {
 
     @Published var isProcessing = false
 
+    private var outputWidth: Int { Int(renderSize.width) }
+    private var outputHeight: Int { Int(renderSize.height) }
+
     // MARK: - Initialization
 
     init() {
@@ -83,14 +87,19 @@ class VideoProcessor {
 
     func configure(
         backgroundMedia: BackgroundMediaType,
+        canvasAspectRatio: CanvasAspectRatio,
+        backgroundScale: CGFloat,
         maskSettings: MaskSettings,
         filterSettings: FilterSettings,
         isPortraitSegmentationEnabled: Bool
     ) {
         self.backgroundMedia = backgroundMedia
+        self.canvasAspectRatio = canvasAspectRatio
+        self.backgroundScale = backgroundScale
         self.maskSettings = maskSettings
         self.filterSettings = filterSettings
         self.isPortraitSegmentationEnabled = isPortraitSegmentationEnabled
+        self.renderSize = canvasAspectRatio.outputSize
     }
 
     // MARK: - Recording Control
@@ -100,6 +109,8 @@ class VideoProcessor {
 
     func startRecording(
         backgroundMedia: BackgroundMediaType,
+        canvasAspectRatio: CanvasAspectRatio,
+        backgroundScale: CGFloat,
         maskSettings: MaskSettings,
         filterSettings: FilterSettings,
         isPortraitSegmentationEnabled: Bool,
@@ -123,10 +134,13 @@ class VideoProcessor {
         hasStartedSession = false
 
         self.backgroundMedia = backgroundMedia
+        self.canvasAspectRatio = canvasAspectRatio
+        self.backgroundScale = backgroundScale
         self.maskSettings = maskSettings
         self.filterSettings = filterSettings
         self.isPortraitSegmentationEnabled = isPortraitSegmentationEnabled
         self.customSavePath = savePath
+        self.renderSize = canvasAspectRatio.outputSize
 
         // 设置背景
         try await setupBackground()
@@ -147,8 +161,8 @@ class VideoProcessor {
         // 配置视频输入
         let videoSettings: [String: Any] = [
             AVVideoCodecKey: AVVideoCodecType.h264,
-            AVVideoWidthKey: VideoConfiguration.outputWidth,
-            AVVideoHeightKey: VideoConfiguration.outputHeight,
+            AVVideoWidthKey: outputWidth,
+            AVVideoHeightKey: outputHeight,
             AVVideoCompressionPropertiesKey: [
                 AVVideoAverageBitRateKey: 10_000_000, // 10 Mbps
                 AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel
@@ -453,8 +467,8 @@ class VideoProcessor {
         }
 
         let outputSize = CGSize(
-            width: Int(VideoConfiguration.outputWidth),
-            height: Int(VideoConfiguration.outputHeight)
+            width: outputWidth,
+            height: outputHeight
         )
 
         let background = getBackgroundFrame()
@@ -529,16 +543,16 @@ class VideoProcessor {
         var pixelBuffer: CVPixelBuffer?
         let attrs: [String: Any] = [
             kCVPixelBufferPixelFormatTypeKey as String: Int(VideoConfiguration.outputPixelFormat),
-            kCVPixelBufferWidthKey as String: Int(VideoConfiguration.outputWidth),
-            kCVPixelBufferHeightKey as String: Int(VideoConfiguration.outputHeight),
+            kCVPixelBufferWidthKey as String: outputWidth,
+            kCVPixelBufferHeightKey as String: outputHeight,
             kCVPixelBufferCGImageCompatibilityKey as String: true,
             kCVPixelBufferCGBitmapContextCompatibilityKey as String: true
         ]
 
         let status = CVPixelBufferCreate(
             kCFAllocatorDefault,
-            Int(VideoConfiguration.outputWidth),
-            Int(VideoConfiguration.outputHeight),
+            outputWidth,
+            outputHeight,
             VideoConfiguration.outputPixelFormat,
             attrs as CFDictionary,
             &pixelBuffer
@@ -715,13 +729,13 @@ class VideoProcessor {
     private func getBackgroundFrame() -> CIImage {
         switch backgroundMedia {
         case .none:
-            return CIImage(color: .black).cropped(to: CGRect(x: 0, y: 0, width: Int(VideoConfiguration.outputWidth), height: Int(VideoConfiguration.outputHeight)))
+            return blackBackgroundImage()
 
         case .image:
             if let img = backgroundImage {
                 return scaleImageToOutputSize(img)
             }
-            return CIImage(color: .black).cropped(to: CGRect(x: 0, y: 0, width: Int(VideoConfiguration.outputWidth), height: Int(VideoConfiguration.outputHeight)))
+            return blackBackgroundImage()
 
         case .video:
             // 从 AVAssetReader 获取下一帧
@@ -744,26 +758,31 @@ class VideoProcessor {
                 reader.startReading()
             }
             // 回退到黑色
-            return CIImage(color: .black).cropped(to: CGRect(x: 0, y: 0, width: Int(VideoConfiguration.outputWidth), height: Int(VideoConfiguration.outputHeight)))
+            return blackBackgroundImage()
         }
     }
 
-    private func scaleImageToOutputSize(_ image: CIImage) -> CIImage {
-        let scaleX = CGFloat(VideoConfiguration.outputWidth) / image.extent.width
-        let scaleY = CGFloat(VideoConfiguration.outputHeight) / image.extent.height
-        let scale = max(scaleX, scaleY)
+    private func blackBackgroundImage() -> CIImage {
+        CIImage(color: .black).cropped(to: CGRect(origin: .zero, size: renderSize))
+    }
 
-        let scaled = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-        let cropRect = CGRect(
-            x: scaled.extent.origin.x + (scaled.extent.width - CGFloat(VideoConfiguration.outputWidth)) / 2,
-            y: scaled.extent.origin.y + (scaled.extent.height - CGFloat(VideoConfiguration.outputHeight)) / 2,
-            width: CGFloat(VideoConfiguration.outputWidth),
-            height: CGFloat(VideoConfiguration.outputHeight)
+    private func scaleImageToOutputSize(_ image: CIImage) -> CIImage {
+        let normalizedImage = image.transformed(
+            by: CGAffineTransform(translationX: -image.extent.origin.x, y: -image.extent.origin.y)
+        )
+        let baseScale = max(renderSize.width / normalizedImage.extent.width, renderSize.height / normalizedImage.extent.height)
+        let appliedScale = baseScale * backgroundScale
+        let scaled = normalizedImage.transformed(by: CGAffineTransform(scaleX: appliedScale, y: appliedScale))
+        let centered = scaled.transformed(
+            by: CGAffineTransform(
+                translationX: (renderSize.width - scaled.extent.width) / 2,
+                y: (renderSize.height - scaled.extent.height) / 2
+            )
         )
 
-        return scaled
-            .cropped(to: cropRect)
-            .transformed(by: CGAffineTransform(translationX: -cropRect.origin.x, y: -cropRect.origin.y))
+        return centered
+            .cropped(to: CGRect(origin: .zero, size: renderSize))
+            .composited(over: blackBackgroundImage())
     }
 
     private func processCameraFrame(_ pixelBuffer: CVPixelBuffer) -> CIImage? {
@@ -824,8 +843,8 @@ class VideoProcessor {
 
     private func renderCameraWithMask(to output: CVPixelBuffer, cameraFrame: CIImage, background: CIImage) {
         // 计算蒙版区域
-        let outputWidth = CGFloat(VideoConfiguration.outputWidth)
-        let outputHeight = CGFloat(VideoConfiguration.outputHeight)
+        let outputWidth = CGFloat(self.outputWidth)
+        let outputHeight = CGFloat(self.outputHeight)
 
         let maskSize = min(outputWidth, outputHeight) * maskSettings.size
         let maskWidth = maskSize * maskSettings.aspectRatio
@@ -898,8 +917,18 @@ class VideoProcessor {
     }
 
     private func renderWatermark(to output: CVPixelBuffer) {
-        let outputWidth = CGFloat(VideoConfiguration.outputWidth)
-        let outputHeight = CGFloat(VideoConfiguration.outputHeight)
+        let outputWidth = CGFloat(self.outputWidth)
+        let outputHeight = CGFloat(self.outputHeight)
+        let fontSize: CGFloat = {
+            switch canvasAspectRatio {
+            case .portrait9x16:
+                return 9
+            case .landscape16x9:
+                return 14
+            case .square1x1, .portrait3x4, .landscape4x3:
+                return 11
+            }
+        }()
 
         // 锁定像素缓冲区
         CVPixelBufferLockBaseAddress(output, [])
@@ -922,7 +951,6 @@ class VideoProcessor {
 
         // 水印文字
         let text = "Created by BeancurdHero" as NSString
-        let fontSize: CGFloat = 14
         let padding: CGFloat = 16
 
         // 计算文字位置（右上角）
